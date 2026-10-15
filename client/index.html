@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SmashBit // 2.5D Pixel Badminton PvP & Doubles</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+    body {
+      background: #000000;
+      color: #f4f4f6;
+      font-family: 'Courier New', Courier, monospace;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+    #game-canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      image-rendering: pixelated;
+      cursor: crosshair;
+    }
+    #hud {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 16px 22px;
+    }
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 14px;
+    }
+    .scoreboard {
+      background: rgba(5, 5, 12, 0.9);
+      border: 2px solid #22c55e;
+      box-shadow: 0 0 18px rgba(34, 197, 94, 0.25);
+      padding: 8px 18px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      pointer-events: auto;
+    }
+    .score-num {
+      font-size: 30px;
+      font-weight: 900;
+      color: #4ade80;
+      text-shadow: 0 0 10px rgba(74, 222, 128, 0.6);
+    }
+    .score-meta {
+      text-align: center;
+      font-size: 11px;
+      letter-spacing: 1.5px;
+      color: #a1a1aa;
+    }
+    .rally-badge {
+      margin-top: 3px;
+      color: #facc15;
+      font-weight: bold;
+    }
+    #llm-thought-box {
+      background: rgba(15, 12, 28, 0.92);
+      border: 2px solid #a855f7;
+      box-shadow: 0 0 18px rgba(168, 85, 247, 0.35);
+      padding: 8px 16px;
+      max-width: 440px;
+      font-size: 11px;
+      color: #f3e8ff;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .llm-header {
+      color: #c084fc;
+      font-weight: 900;
+      font-size: 10px;
+      letter-spacing: 1.2px;
+    }
+    #btn-settings-toggle {
+      pointer-events: auto;
+      background: rgba(5, 5, 12, 0.9);
+      color: #f8fafc;
+      border: 2px solid #52525b;
+      padding: 8px 14px;
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    #btn-settings-toggle:hover {
+      border-color: #facc15;
+      color: #facc15;
+    }
+    #banner {
+      align-self: center;
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #ffffff;
+      background: rgba(0, 0, 0, 0.85);
+      border: 2px solid #facc15;
+      padding: 10px 24px;
+      text-shadow: 0 0 12px #facc15;
+      transition: opacity 0.2s;
+    }
+    .bottom-mini-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+    .pill {
+      background: rgba(5, 5, 12, 0.84);
+      border: 1px solid #27272a;
+      padding: 5px 12px;
+    }
+
+    .overlay-screen {
+      position: fixed;
+      inset: 0;
+      background: rgba(4, 6, 14, 0.78);
+      backdrop-filter: blur(3px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 60;
+      pointer-events: auto;
+    }
+    .overlay-screen.open {
+      display: flex;
+    }
+    .hero-container {
+      background: #090c15;
+      border: 3px solid #22c55e;
+      box-shadow: 0 0 50px rgba(0, 0, 0, 0.95), 0 0 25px rgba(34, 197, 94, 0.25);
+      width: 840px;
+      max-width: 95vw;
+      padding: 24px 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .hero-header {
+      text-align: center;
+      border-bottom: 2px solid #1e293b;
+      padding-bottom: 12px;
+    }
+    .hero-logo {
+      font-size: 34px;
+      font-weight: 900;
+      color: #4ade80;
+      letter-spacing: 5px;
+      text-shadow: 0 0 16px rgba(74, 222, 128, 0.55);
+    }
+    .hero-sub {
+      font-size: 11px;
+      color: #facc15;
+      letter-spacing: 2.5px;
+      margin-top: 4px;
+    }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1fr 1.35fr;
+      gap: 20px;
+    }
+    .card-box {
+      background: #101422;
+      border: 1px solid #27272a;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+    .section-title {
+      font-size: 11px;
+      color: #facc15;
+      letter-spacing: 1.5px;
+      font-weight: bold;
+    }
+    .preview-wrap {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      background: #070910;
+      border: 2px solid #1e293b;
+      padding: 10px;
+    }
+    #char-preview-canvas {
+      width: 96px;
+      height: 112px;
+      image-rendering: pixelated;
+      background: radial-gradient(circle, #1e293b 0%, #070910 80%);
+      border: 1px solid #334155;
+    }
+    .custom-btns {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex: 1;
+    }
+    .lobby-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    input, button {
+      background: #141929;
+      color: #f4f4f6;
+      border: 1px solid #52525b;
+      padding: 8px 11px;
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: bold;
+      text-transform: uppercase;
+    }
+    input {
+      width: 100%;
+      text-align: center;
+      border-color: #38bdf8;
+      color: #38bdf8;
+      font-size: 12px;
+    }
+    button {
+      cursor: pointer;
+      transition: all 0.12s;
+    }
+    button:hover, button.active-opt {
+      background: #22c55e;
+      color: #000;
+      border-color: #22c55e;
+    }
+    .btn-llm {
+      border-color: #a855f7;
+      color: #e9d5ff;
+      flex: 1;
+    }
+    .btn-llm:hover {
+      background: #a855f7;
+      color: #000;
+      border-color: #c084fc;
+    }
+    .cta-primary {
+      background: #22c55e;
+      color: #052e16;
+      border-color: #4ade80;
+      font-size: 13px;
+      padding: 11px;
+      font-weight: 900;
+      letter-spacing: 1.5px;
+      width: 100%;
+    }
+    .cta-primary:hover {
+      background: #4ade80;
+      box-shadow: 0 0 18px rgba(74, 222, 128, 0.6);
+    }
+    .controls-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 11px;
+      color: #d4d4d8;
+      background: #10131d;
+      padding: 12px;
+      border: 1px solid #27272a;
+    }
+    .key {
+      display: inline-block;
+      background: #27272a;
+      color: #4ade80;
+      padding: 2px 7px;
+      border-radius: 2px;
+      font-weight: bold;
+      min-width: 110px;
+      text-align: center;
+      margin-right: 8px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game-canvas"></canvas>
+
+  <!-- Gameplay HUD -->
+  <div id="hud">
+    <div class="top-bar">
+      <div class="scoreboard">
+        <div>
+          <div id="label-p0" style="font-size:10px;color:#38bdf8;font-weight:bold;">SHEKHAR</div>
+          <div id="score-p0" class="score-num">0</div>
+        </div>
+        <div class="score-meta">
+          <div id="mode-label">FIRST TO 11 PTS</div>
+          <div id="rally-counter" class="rally-badge">RALLY: 0</div>
+          <div id="shot-indicator" style="color:#38bdf8;margin-top:3px;">AIM MOUSE + [L-CLICK / J]</div>
+        </div>
+        <div>
+          <div id="label-p1" style="font-size:10px;color:#f43f5e;font-weight:bold;">GPT-OSS 120B</div>
+          <div id="score-p1" class="score-num">0</div>
+        </div>
+      </div>
+
+      <div id="llm-thought-box">
+        <div id="llm-model-header" class="llm-header">⚡ GROQ AI // OPENAI/GPT-OSS-120B</div>
+        <div id="llm-thought-text">"Serve it up! Analyzing your court coverage..."</div>
+      </div>
+
+      <button id="btn-settings-toggle">⚙ MENU [ESC]</button>
+    </div>
+
+    <div id="banner" style="opacity:0;">PRESS [J] OR L-CLICK TO SERVE</div>
+
+    <div class="bottom-mini-bar">
+      <div id="aim-readout" class="pill">AIM: MOUSE CURSOR | RETICLE: ON [PRESS T]</div>
+      <div id="stamina-readout" class="pill">STAMINA: 100% | CROWD HYPE: LOW</div>
+    </div>
+  </div>
+
+  <!-- 1. HERO LANDING PAGE & CHARACTER CUSTOMIZER -->
+  <div id="hero-overlay" class="overlay-screen open">
+    <div class="hero-container">
+      <div class="hero-header">
+        <div class="hero-logo">🏸 SMASHBIT 2026</div>
+        <div class="hero-sub">16-BIT GBA WORLD TOUR BADMINTON // 1V1 SINGLES & 2V2 DOUBLES PVP</div>
+      </div>
+
+      <div class="hero-grid">
+        <div class="card-box">
+          <div class="section-title">1. PLAYER PROFILE & GBA LOCKER</div>
+          <input id="input-username" value="SHEKHAR" maxlength="12" placeholder="ENTER USERNAME" />
+
+          <div class="preview-wrap">
+            <canvas id="char-preview-canvas" width="96" height="112"></canvas>
+            <div class="custom-btns">
+              <button id="btn-cycle-hat">Headgear: HEADBAND</button>
+              <button id="btn-cycle-kit">Jersey: Crimson Fire</button>
+              <button id="btn-cycle-skin">Skin: Golden Tan</button>
+              <button id="btn-cycle-racket">Racket: Volt Cyan</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card-box">
+          <div class="section-title">2. MODE (1V1 SINGLES OR 2V2 DOUBLES) & POINTS</div>
+          <div class="lobby-row">
+            <button data-format="1V1" class="active-opt" style="flex:1;">1V1 SINGLES</button>
+            <button data-format="2V2" style="flex:1;">2V2 DOUBLES (4 PLAYERS)</button>
+          </div>
+          <div class="lobby-row">
+            <button data-pts="5">5 PTS (BLITZ)</button>
+            <button data-pts="11" class="active-opt">11 PTS (ARCADE)</button>
+            <button data-pts="21">21 PTS (OFFICIAL BWF)</button>
+          </div>
+
+          <div class="section-title" style="margin-top:2px;">3. GROQ LLM AI OPPONENT (GPT-OSS / QWEN)</div>
+          <div class="lobby-row">
+            <button id="btn-cycle-llm" class="btn-llm">LLM BRAIN: GPT-OSS 120B</button>
+            <button data-diff="ROOKIE">ROOKIE</button>
+            <button data-diff="PRO" class="active-opt">PRO</button>
+            <button data-diff="LEGEND">LEGEND</button>
+          </div>
+          <input
+            id="input-groq-key"
+            type="password"
+            placeholder="PASTE GROQ API KEY (gsk_...) — SAVED AUTOMATICALLY"
+            style="text-transform:none;border-color:#a855f7;color:#e9d5ff;"
+          />
+          <button id="btn-start-ai" class="cta-primary">▶ PLAY VS GROQ LLM (1V1 OR 2V2 WITH AI PARTNER)</button>
+
+          <div class="section-title" style="margin-top:4px;">4. ONLINE SQUAD LOBBY WITH FRIENDS</div>
+          <div class="lobby-row" style="flex-wrap:nowrap;">
+            <button id="btn-hero-create" style="flex:1;">CREATE SQUAD ROOM</button>
+            <input id="hero-input-code" placeholder="CODE" maxlength="4" style="width:85px;" />
+            <button id="btn-hero-join">JOIN ROOM</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. ONLINE SQUAD & DOUBLES LOBBY OVERLAY -->
+  <div id="lobby-overlay" class="overlay-screen">
+    <div class="hero-container" style="width:660px;">
+      <div class="hero-header" style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="text-align:left;">
+          <div style="font-size:12px;color:#facc15;">SQUAD ROOM CODE (SHARE WITH FRIENDS)</div>
+          <div id="lobby-room-code" style="font-size:38px;font-weight:900;color:#4ade80;letter-spacing:6px;">94PD</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end;">
+          <span id="lobby-format-badge" style="font-size:12px;color:#38bdf8;font-weight:bold;">2V2 DOUBLES</span>
+          <button id="btn-copy-invite" style="border-color:#38bdf8;color:#38bdf8;">📋 COPY FRIEND INVITE LINK</button>
+        </div>
+      </div>
+
+      <div id="lobby-slots-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;"></div>
+
+      <div style="font-size:11px;color:#a1a1aa;text-align:center;">
+        Tip: Any slot left as "AI PARTNER" will be controlled by an AI teammate/opponent when the Host starts!
+      </div>
+
+      <div class="lobby-row" style="justify-content:space-between;">
+        <button id="btn-lobby-leave">← LEAVE ROOM</button>
+        <button id="btn-lobby-start" class="cta-primary" style="width:auto;padding:12px 28px;">▶ START MATCH NOW</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. CHAMPIONSHIP TROPHY VICTORY OVERLAY -->
+  <div id="victory-overlay" class="overlay-screen" style="background:rgba(4,6,14,0.35);align-items:flex-end;padding-bottom:42px;">
+    <div class="hero-container" style="width:560px;text-align:center;border-color:#facc15;">
+      <div id="victory-title" style="font-size:24px;font-weight:900;color:#facc15;letter-spacing:2px;">
+        🏆 CHAMPION!
+      </div>
+      <div id="victory-stats" style="font-size:13px;color:#e2e8f0;letter-spacing:1px;">
+        FINAL SCORE: 11 - 7
+      </div>
+      <div class="lobby-row" style="justify-content:center;gap:14px;">
+        <button id="btn-play-again" class="cta-primary" style="width:auto;padding:12px 26px;">🔄 PLAY REMATCH</button>
+        <button id="btn-main-menu" style="padding:12px 22px;">🏠 CUSTOMIZE / MAIN MENU</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. IN-GAME [ESC] PAUSE & SETTINGS MODAL -->
+  <div id="settings-modal" class="overlay-screen">
+    <div class="hero-container" style="width:500px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #27272a;padding-bottom:10px;">
+        <span style="font-size:16px;font-weight:900;color:#4ade80;">SMASHBIT // PAUSE MENU</span>
+        <button id="btn-close-modal">RESUME [ESC]</button>
+      </div>
+
+      <div class="card-box">
+        <div class="section-title">AIMING, RETICLE & CAMERA</div>
+        <div class="lobby-row">
+          <button id="btn-aim-mode">Aim: Mouse Cursor</button>
+          <button id="btn-reticle">Reticle: GBA Crosshair</button>
+          <button id="btn-cam">Cam: Broadcast</button>
+          <button id="btn-open-hero">🏠 Return to Hero Menu</button>
+        </div>
+        <div id="net-status" style="font-size:11px;color:#a1a1aa;">Status: Ready</div>
+      </div>
+
+      <div class="card-box">
+        <div class="section-title">PRO BADMINTON CONTROLS</div>
+        <div class="controls-list">
+          <div><span class="key">MOUSE / WASD</span> Aim Shot on Opponent Court + Footwork</div>
+          <div><span class="key">L-CLICK / J</span> Attack (Jump Smash / Full Smash / Drive)</div>
+          <div><span class="key">M-CLICK / K / E</span> High Arc (Deep Baseline Clear / Lift)</div>
+          <div><span class="key">R-CLICK / L</span> Soft Touch (Slice Drop / Tight Net / Short Serve)</div>
+          <div><span class="key">SHIFT / SPACE</span> Explosive Lunge Dive / Jump for Smash</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
