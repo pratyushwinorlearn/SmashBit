@@ -23,9 +23,14 @@ export class CourtBounds {
     this.buildCourtsideCrewAndProps();
   }
 
-  public updateCourtsideScoreboard(p0: number, p1: number): void {
+  public updateCourtsideScoreboard(
+    p0: number,
+    p1: number,
+    p0Name = 'P1',
+    p1Name = 'BOT'
+  ): void {
     if (this.scoreboardMat) {
-      this.scoreboardMat.map = GbaSpriteFactory.createScoreboardTexture(p0, p1);
+      this.scoreboardMat.map = GbaSpriteFactory.createScoreboardTexture(p0, p1, p0Name, p1Name);
       this.scoreboardMat.needsUpdate = true;
     }
   }
