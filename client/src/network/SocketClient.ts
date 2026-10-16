@@ -15,6 +15,7 @@ export class SocketClient {
   public localSide: 0 | 1 = 0;
   public roomCode = '';
   public clockOffset = 0;
+  public pingMs = 0;
   public currentLobby: LobbyStatePacket | null = null;
 
   constructor(
@@ -33,10 +34,18 @@ export class SocketClient {
       onStatusChange: (text: string) => void;
     }
   ) {
-    this.socket = io(serverUrl, { autoConnect: false });
+    // Force pure WebSocket transport to eliminate HTTP polling lag
+    this.socket = io(serverUrl, {
+      autoConnect: false,
+      transports: ['websocket'],
+      upgrade: false
+    });
 
     this.socket.on('connect', () => {
       this.syncClock();
+      setInterval(() => {
+        if (this.socket.connected) this.syncClock();
+      }, 3000);
     });
 
     this.socket.on('LOBBY_UPDATE', (lobby: LobbyStatePacket) => {
@@ -80,6 +89,13 @@ export class SocketClient {
     this.socket.on('POINT_SCORED', (pkt: PointScoredPacket) => {
       this.handlers.onPointScored(pkt);
     });
+  }
+
+  /**
+   * Returns current synchronized server timestamp in ms
+   */
+  public getServerNow(): number {
+    return Date.now() + this.clockOffset;
   }
 
   public createRoom(
@@ -145,7 +161,7 @@ export class SocketClient {
 
   public sendPlayerState(pkt: PlayerStatePacket): void {
     if (this.isOnline) {
-      this.socket.emit('PLAYER_STATE', pkt);
+      this.socket.volatile.emit('PLAYER_STATE', pkt);
     }
   }
 
@@ -172,7 +188,12 @@ export class SocketClient {
       (res: { clientSentTime: number; serverTime: number }) => {
         const now = Date.now();
         const rtt = now - res.clientSentTime;
-        this.clockOffset = res.serverTime - (now - rtt / 2);
+        this.pingMs = Math.round(rtt);
+        const estimatedOffset = res.serverTime - (now - rtt / 2);
+        this.clockOffset =
+          this.clockOffset === 0
+            ? estimatedOffset
+            : this.clockOffset * 0.7 + estimatedOffset * 0.3;
       }
     );
   }

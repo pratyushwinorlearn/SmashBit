@@ -14,12 +14,15 @@ const app = express();
 app.use(cors());
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', game: 'SmashBit PvP & Doubles Relay' });
+  res.json({ status: 'ok', game: 'SmashBit Low-Latency Relay' });
 });
 
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] }
+  cors: { origin: '*', methods: ['GET', 'POST'] },
+  transports: ['websocket', 'polling'],
+  pingInterval: 5000,
+  pingTimeout: 10000
 });
 
 const roomManager = new RoomManager();
@@ -41,7 +44,12 @@ io.on('connection', (socket) => {
       }: { nickname: string; matchFormat: MatchFormat; targetPoints: 5 | 11 | 21 },
       ack
     ) => {
-      const room = roomManager.createRoom(socket.id, nickname, matchFormat || '1V1', targetPoints || 11);
+      const room = roomManager.createRoom(
+        socket.id,
+        nickname,
+        matchFormat || '1V1',
+        targetPoints || 11
+      );
       socket.join(room.code);
       const lobby = roomManager.toLobbyPacket(room);
       ack({ success: true, code: room.code, slotIndex: 0, lobby });
@@ -80,18 +88,20 @@ io.on('connection', (socket) => {
     });
   });
 
+  // Unreliable/volatile 60Hz player movement relay (never queues behind old packets)
   socket.on('PLAYER_STATE', (packet: PlayerStatePacket) => {
     const room = roomManager.getRoomBySocket(socket.id);
     if (!room) return;
-    socket.to(room.code).emit('OPPONENT_STATE', packet);
+    socket.volatile.to(room.code).emit('OPPONENT_STATE', packet);
   });
 
+  // CRITICAL FIX: Use socket.to() so we DO NOT echo the hit back to the player who just hit it!
   socket.on('SHUTTLE_HIT', (packet: ShuttleHitPacket) => {
     const room = roomManager.getRoomBySocket(socket.id);
     if (!room) return;
     room.referee.isPointActive = true;
     room.referee.rallyCount = packet.rallyCount;
-    io.to(room.code).emit('SHUTTLE_SYNC', packet);
+    socket.to(room.code).emit('SHUTTLE_SYNC', packet);
   });
 
   socket.on(
@@ -105,7 +115,7 @@ io.on('connection', (socket) => {
     }) => {
       const room = roomManager.getRoomBySocket(socket.id);
       if (!room || !room.referee.isPointActive) return;
-      const result = room.referee.registerPoint(winnerSide, reason);
+      const result = roomManager.getRoomBySocket(socket.id)!.referee.registerPoint(winnerSide, reason);
       io.to(room.code).emit('POINT_SCORED', result);
     }
   );

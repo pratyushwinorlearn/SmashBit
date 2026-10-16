@@ -54,8 +54,8 @@ const groqAgent = new GroqBadmintonAgent();
 // 4 Players: Slot 0 & 2 = Near Team 0 | Slot 1 & 3 = Far Team 1
 const p0 = new Player(0, 0x1d4ed8, scene);
 const p1 = new Player(1, 0x7c3aed, scene);
-const p2 = new Player(0, 0x10b981, scene); // Near Court Doubles Partner
-const p3 = new Player(1, 0xeab308, scene); // Far Court Doubles Partner
+const p2 = new Player(0, 0x10b981, scene);
+const p3 = new Player(1, 0xeab308, scene);
 p2.applyCustomization({
   ...DEFAULT_P1_CUSTOM,
   hatStyle: 'CAP',
@@ -90,6 +90,9 @@ let stateTimer = 0;
 let isMenuOpen = false;
 let matchPhase: 'HERO' | 'LOBBY' | 'PLAYING' | 'CELEBRATION' = 'HERO';
 
+// Pending point timer for 160ms defender lag-rescue window
+let pendingPointTimeout: ReturnType<typeof setTimeout> | null = null;
+
 // --- DOM HUD Elements ---
 const scoreEl0 = document.getElementById('score-p0')!;
 const scoreEl1 = document.getElementById('score-p1')!;
@@ -118,7 +121,6 @@ function resetAllPlayerPositions(serverScore: number): void {
   p1.resetPosition(serverScore);
 
   if (isDoubles) {
-    // Position partners on the opposite left/right service court box
     p2.resetPosition(serverScore + 1);
     p2.pos.z = 4.4;
     p2.syncMesh();
@@ -157,7 +159,9 @@ function updateHUD(): void {
   rallyEl.textContent = 'RALLY: ' + shuttle.rallyCount;
   const hype = crowd.excitement > 0.7 ? 'ROARING' : crowd.excitement > 0.4 ? 'RISING' : 'LOW';
   const myPlayer = allPlayers[localSlot];
-  staminaEl.textContent = 'STAMINA: ' + Math.round(myPlayer.stamina) + '% | CROWD HYPE: ' + hype;
+  const pingBadge = net.isOnline ? ' | PING: ' + net.pingMs + 'ms' : '';
+  staminaEl.textContent =
+    'STAMINA: ' + Math.round(myPlayer.stamina) + '% | HYPE: ' + hype + pingBadge;
 }
 
 // --- Network PvP & Doubles Setup ---
@@ -218,7 +222,12 @@ const net = new SocketClient(SERVER_URL, {
     reconciler.applyOpponentPacket(pkt, allPlayers);
   },
   onShuttleSync: (pkt) => {
-    reconciler.applyDeterministicHit(pkt, shuttle);
+    // Cancel any pending floor-hit point if the opponent rescued the shuttle in time!
+    if (pendingPointTimeout) {
+      clearTimeout(pendingPointTimeout);
+      pendingPointTimeout = null;
+    }
+    reconciler.applyDeterministicHit(pkt, shuttle, net.getServerNow());
     longestRally = Math.max(longestRally, pkt.rallyCount);
     sound.playRacketHit(pkt.shotType, true);
     crowd.boostExcitement(pkt.shotType === 'JUMP_SMASH' ? 0.25 : 0.08);
@@ -226,6 +235,10 @@ const net = new SocketClient(SERVER_URL, {
     updateHUD();
   },
   onPointScored: (pkt) => {
+    if (pendingPointTimeout) {
+      clearTimeout(pendingPointTimeout);
+      pendingPointTimeout = null;
+    }
     scores = pkt.scores;
     servingSide = pkt.servingSide;
     shuttle.inPlay = false;
@@ -389,9 +402,6 @@ function triggerChampionshipCeremony(winnerSide: 0 | 1): void {
   menuFlow.showVictoryScreen(winnerName, scores, longestRally);
 }
 
-/**
- * Controls AI bots for any slot not occupied by a human player (Works in both 1v1 and 2v2 Doubles!)
- */
 function updateAISlots(dt: number): void {
   const speedMult = aiDifficulty === 'LEGEND' ? 1.14 : aiDifficulty === 'PRO' ? 0.95 : 0.75;
   const maxSlot = matchFormat === '2V2' ? 4 : 2;
@@ -400,10 +410,12 @@ function updateAISlots(dt: number): void {
     const slot = i as SlotIndex;
     if (activeHumanSlots.has(slot)) continue;
 
+    // In Online PvP, only the Host (localSlot === 0) drives the AI bots
+    if (net.isOnline && localSlot !== 0) continue;
+
     const bot = allPlayers[slot];
     const botSide = bot.side;
 
-    // 1. AI Serving (if it's this side's serve and primary slot)
     if (!shuttle.inPlay) {
       if (servingSide === botSide && (slot === 1 || slot === 0) && stateTimer <= 0) {
         bot.triggerSwing();
@@ -420,7 +432,6 @@ function updateAISlots(dt: number): void {
       continue;
     }
 
-    // 2. AI Court Coverage (In 2v2 Doubles, Partner covers Left/Front while Primary covers Right/Back)
     const shuttleHeadingToBotSide =
       (botSide === 0 && shuttle.vel.z > 0) || (botSide === 1 && shuttle.vel.z < 0);
 
@@ -428,7 +439,6 @@ function updateAISlots(dt: number): void {
     let homeZ = botSide === 0 ? (slot === 2 ? 2.1 : 4.2) : slot === 3 ? -2.1 : -4.2;
 
     if (shuttleHeadingToBotSide) {
-      // Closest AI on this team intercepts the shuttle
       homeX = shuttle.pos.x;
       homeZ = botSide === 0 ? Math.max(0.8, shuttle.pos.z) : Math.min(-0.8, shuttle.pos.z);
     }
@@ -437,7 +447,6 @@ function updateAISlots(dt: number): void {
     const dz = THREE.MathUtils.clamp(homeZ - bot.pos.z, -1, 1);
     bot.updateLocal(dt, dx * 0.9, dz * 0.9, false, () => {}, false, speedMult);
 
-    // 3. AI Strike Execution
     const onBotHalf = botSide === 0 ? shuttle.pos.z > 0.25 : shuttle.pos.z < -0.25;
     if (onBotHalf && shuttle.lastHitterSide !== botSide) {
       const plan = groqAgent.currentPlan;
@@ -468,9 +477,15 @@ function executeStrike(
   isSweetSpot: boolean,
   timingGrade: TimingGrade = 'GOOD'
 ): void {
+  if (pendingPointTimeout) {
+    clearTimeout(pendingPointTimeout);
+    pendingPointTimeout = null;
+  }
+
   const nextRally = shuttle.inPlay ? shuttle.rallyCount + 1 : 1;
   longestRally = Math.max(longestRally, nextRally);
-  shuttle.launch(shuttle.pos.clone(), velocity, hitter.side, shotType, nextRally);
+  const launchOrigin = shuttle.pos.clone();
+  shuttle.launch(launchOrigin, velocity, hitter.side, shotType, nextRally);
   if (isSweetSpot) {
     shuttle.triggerSweetSpotFlash();
   }
@@ -496,7 +511,7 @@ function executeStrike(
         scores,
         rallyCount: nextRally,
         incomingShotType: shotType,
-        shuttleStartPos: shuttle.pos.clone(),
+        shuttleStartPos: launchOrigin,
         shuttleVel: velocity.clone(),
         humanPos: p0.pos.clone(),
         humanStamina: p0.stamina,
@@ -512,14 +527,15 @@ function executeStrike(
     );
   }
 
+  // Send synchronized server timestamp so opponent fast-forwards shuttle transit delay!
   net.sendShuttleHit({
     hitterSide: hitter.side,
     hitterSlot,
-    pos: [shuttle.pos.x, shuttle.pos.y, shuttle.pos.z],
+    pos: [launchOrigin.x, launchOrigin.y, launchOrigin.z],
     vel: [velocity.x, velocity.y, velocity.z],
     shotType,
     rallyCount: nextRally,
-    timestamp: Date.now()
+    timestamp: net.getServerNow()
   });
 }
 
@@ -539,7 +555,14 @@ function handleFloorHit(x: number, z: number): void {
   }
 
   if (net.isOnline) {
-    if (localSlot === 0) net.reportPoint(winnerSide, reason);
+    if (localSlot === 0) {
+      // 160ms Grace Buffer so a remote friend's last-millisecond diving save packet isn't cut off!
+      if (pendingPointTimeout) clearTimeout(pendingPointTimeout);
+      pendingPointTimeout = setTimeout(() => {
+        net.reportPoint(winnerSide, reason);
+        pendingPointTimeout = null;
+      }, 160);
+    }
   } else {
     scores[winnerSide] += 1;
     servingSide = winnerSide;
@@ -559,8 +582,6 @@ function handleFloorHit(x: number, z: number): void {
     showBanner('POINT ' + pointWinnerName + ' — ' + reason.replace('_', ' '), 1.8);
   }
 }
-
-let netTickCounter = 0;
 
 const loop = new GameLoop(
   (dt) => {
@@ -631,24 +652,21 @@ const loop = new GameLoop(
 
       if (net.isOnline) {
         reconciler.interpolateRemotePlayers(dt, allPlayers, localSlot, activeHumanSlots);
-        netTickCounter++;
-        if (netTickCounter % 2 === 0) {
-          net.sendPlayerState({
-            id: net.socket.id || 'local',
-            slotIndex: localSlot,
-            side: localSide,
-            x: myPlayer.pos.x,
-            y: myPlayer.pos.y,
-            z: myPlayer.pos.z,
-            vx: myPlayer.vel.x,
-            vz: myPlayer.vel.z,
-            anim: myPlayer.animState === 'TROPHY' ? 'IDLE' : myPlayer.animState,
-            stamina: myPlayer.stamina
-          });
-        }
+        // Stream 60Hz volatile player state for zero-delay footwork sync
+        net.sendPlayerState({
+          id: net.socket.id || 'local',
+          slotIndex: localSlot,
+          side: localSide,
+          x: myPlayer.pos.x,
+          y: myPlayer.pos.y,
+          z: myPlayer.pos.z,
+          vx: myPlayer.vel.x,
+          vz: myPlayer.vel.z,
+          anim: myPlayer.animState === 'TROPHY' ? 'IDLE' : myPlayer.animState,
+          stamina: myPlayer.stamina
+        });
       }
 
-      // Update any AI-controlled partner/opponent slots
       updateAISlots(dt);
 
       if (!shuttle.inPlay) {
